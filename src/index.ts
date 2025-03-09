@@ -1,23 +1,34 @@
 import vertShader from './shaders/vertex.wgsl?raw';
 import fragShader from './shaders/fragment.wgsl?raw';
 
+
+interface VertexObjType {
+    vertex: Float32Array,
+    vertexBuffer: GPUBuffer,
+}
+
 class GPUApp {
     canvas: HTMLCanvasElement;
 
     #format = navigator.gpu.getPreferredCanvasFormat();
     #device: GPUDevice | null = null;
     #context: GPUCanvasContext | null = null;
+    #vertexObj!: VertexObjType;
+    #pipeline: GPURenderPipeline | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
-
+        const { devicePixelRatio } = window;
+        canvas.height = canvas.clientHeight * devicePixelRatio;
+        canvas.width = canvas.clientWidth * devicePixelRatio;
         this.canvas = canvas;
         this.initAsync();
     }
 
     async initAsync() {
         await this.#initWebGPU();
-        const pipeline = await this.#createPipeline();
-        this.#draw(pipeline);
+        this.#pipeline = await this.#createPipeline()!;
+        this.#createVertex();
+        this.#draw(this.#pipeline);
     }
 
     async #initWebGPU() {
@@ -44,6 +55,32 @@ class GPUApp {
         // console.log(device);
     }
 
+    #createVertex() {
+        const vertex = new Float32Array([
+            0.0, 0.5, 0,
+            -0.5, -0.5, 0,
+            0.5, -0.5, 0
+        ]);
+        const vertexBuffer = this.#device?.createBuffer({
+            size: vertex.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        })!;
+
+        this.#vertexObj = {
+            vertex,
+            vertexBuffer,
+        }
+
+        this.#device?.queue.writeBuffer(vertexBuffer, 0, vertex);
+    }
+
+    move(value: number) {
+        this.#vertexObj.vertex[0] = 0 + value;
+        this.#vertexObj.vertex[3] = -0.5 + value;
+        this.#vertexObj.vertex[6] = 0.5 + value;
+        this.#device?.queue.writeBuffer(this.#vertexObj.vertexBuffer, 0, this.#vertexObj.vertex)
+        this.#draw(this.#pipeline!);
+    }
 
     #createPipeline() {
         return this.#device?.createRenderPipelineAsync({
@@ -53,6 +90,16 @@ class GPUApp {
                     code: vertShader,
                 }),
                 entryPoint: 'main',
+                buffers: [
+                    {
+                        arrayStride: 4 * 3, // 每三位分割
+                        attributes: [{
+                            shaderLocation: 0,
+                            format: 'float32x3',
+                            offset: 0,
+                        }]
+                    }
+                ]
             },
             primitive: {
                 topology: 'triangle-list',
@@ -67,6 +114,7 @@ class GPUApp {
         });
     }
 
+
     #draw(pipeline: GPURenderPipeline) {
         const commandEncoder = this.#device?.createCommandEncoder();
         const renderPass = commandEncoder?.beginRenderPass({
@@ -79,6 +127,7 @@ class GPUApp {
         })
 
         renderPass?.setPipeline(pipeline);
+        renderPass?.setVertexBuffer(0, this.#vertexObj!.vertexBuffer);
         renderPass?.draw(3);
         renderPass?.end();
 
@@ -91,3 +140,8 @@ class GPUApp {
 const canvas = document.querySelector<HTMLCanvasElement>('canvas')!;
 const gpu = new GPUApp(canvas);
 gpu.initAsync();
+
+document.querySelector('input[type="range"]')?.addEventListener('input', (e) => {
+    const value = +(<HTMLInputElement>e.target).value;
+    gpu.move(value);
+});
